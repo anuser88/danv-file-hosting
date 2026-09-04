@@ -23,7 +23,7 @@ const args = process.argv.slice(2);
 			console.error(`Error: ${acc.error}`);
 		}
 	} else {
-		console.log(`Syntax: node "${process.argv[1]}" <username> <password> [upload/download/share] <file path/project id>`);
+		console.log(`Syntax: node "${process.argv[1]}" <username> <password> [upload/download/share] <src file path/project id> {optional: <project name/dst file path>}`);
 	}
 	
 	function sleep(ms) {
@@ -64,7 +64,7 @@ const args = process.argv.slice(2);
 			chunkIndex++;
 		}
 		formData.append("author", args[0]);
-		formData.append("title", `${args[3]}-${Math.random().toString(36).substring(2)}`);
+		formData.append("title", args[4]?args[4]:`${args[3]}-${Math.random().toString(36).substring(2)}`);
 		formData.append("visibility", visi);
 		formData.append("description", `${now.toISOString()} or ${now.toTimeString()}`);
 		formData.append("credits", path.basename(args[3]));
@@ -105,7 +105,7 @@ const args = process.argv.slice(2);
 				console.error("File not available!");
 				return;
 			}
-			const out = fs.createWriteStream(prj.credits);
+			const out = fs.createWriteStream(args[4]?args[4]:prj.credits);
 			const body = stream.Readable.fromWeb(res.body);
 			await streamp.finished(body.pipe(out));
 			console.log("Download completed successfully!");
