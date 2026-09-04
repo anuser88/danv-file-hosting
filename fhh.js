@@ -16,12 +16,14 @@ const args = process.argv.slice(2);
 				await upload(args[3], session);
 			} else if (args[2] == "download") {
 				await download(args[3]);
+			} else if (args[2] == "share") {
+				await upload(args[3], session, "public");
 			}
 		} else {
 			console.error(`Error: ${acc.error}`);
 		}
 	} else {
-		console.log(`Syntax: node "${process.argv[1]}" <username> <password> [upload/download] <file path/project id>`);
+		console.log(`Syntax: node "${process.argv[1]}" <username> <password> [upload/download/share] <file path/project id>`);
 	}
 	
 	function sleep(ms) {
@@ -47,7 +49,7 @@ const args = process.argv.slice(2);
 		}
 	}
 
-	async function upload(fileName, session) {
+	async function upload(fileName, session, visi = "private") {
 		console.log(`Uploading ${fileName}...`);
 		const fileInput = await fs.openAsBlob(fileName);
 		const formData = new FormData();
@@ -63,7 +65,7 @@ const args = process.argv.slice(2);
 		}
 		formData.append("author", args[0]);
 		formData.append("title", `${args[3]}-${Math.random().toString(36).substring(2)}`);
-		formData.append("visibility", "private");
+		formData.append("visibility", visi);
 		formData.append("description", `${now.toISOString()} or ${now.toTimeString()}`);
 		formData.append("credits", path.basename(args[3]));
 		formData.append("username", args[0]);
