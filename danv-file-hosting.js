@@ -6,12 +6,15 @@ const streamp = require("stream/promises");
 const path = require("path");
 const rlp = require("readline/promises");
 const args = process.argv.slice(2);
+const admZip = require("adm-zip"); // need to install
 const { stdin: input, stdout: output } = require("process");
 const rl = rlp.createInterface({ input, output });
 
 !async function() {
 	const WORKER_URL = "https://app.studiodanv.workers.dev";
 	const destDir = () => dirStack.reduce((obj, key) => obj?.children?.[key], dirs.dirs);
+	const titlle = ".dfhm-"; // change to anything you want to avoid warnings
+	const cre = "Do not touch this project! Please leave it as-is. #";
 	let first = false;
 	let account;
 	let saved = {username: args[0], password: args[1]};
@@ -19,6 +22,7 @@ const rl = rlp.createInterface({ input, output });
 	
 	await loginPrompt();
 	let dirs = await downloadMeta();
+	await uploadMeta(dirs);
 	
 	async function loginPrompt() {
 		if (saved.password) {
@@ -118,21 +122,20 @@ const rl = rlp.createInterface({ input, output });
 			const update = allProjects?.find(getMeta)?.projectId;
 			if (update) finalForm.append("updateProjectId", update);
 			finalForm.append("preloadedFileId", ids.join(","));
-			finalForm.append("title", ".danv-file-hosting-map"); 
+			finalForm.append("title", titlle + Math.random().toString(36).substring(2)); 
 			finalForm.append("visibility", "private"); 
 			finalForm.append("author", account?.username); 
 			finalForm.append("description", `Last modified: ${now.toISOString()} or ${now.toTimeString()}`); 
-			finalForm.append("credits", "Made by heythisismyacc (ezx6t). Do not touch this project, leave it as-is.");
+			finalForm.append("credits", cre + Math.random().toString(36).substring(2));
 			finalForm.append("username", account?.username); 
 			finalForm.append("sessionToken", account?.sessionToken);
 
 			const finalRes = await apiFetch(`${WORKER_URL}/api/upload`, { method: 'POST', body: finalForm, headers:{"X-Client-Type":"StudioDANV-Web"} });
 			if (finalRes.success) { 
-				console.log("Uploaded successfully!"); 
-				console.log(finalRes); 
+				console.log("Uploaded successfully!");
 				await loadProjects();
 			} else {
-				console.log(finalRes.error || "Lỗi tải lên");
+				console.log(finalRes.error || "Upload Error");
 			}
 		} catch(err) { 
 			console.log("Upload error: " + err.message); 
@@ -148,19 +151,24 @@ const rl = rlp.createInterface({ input, output });
 		}
 		else console.log("Upload failed!");
 	}
-	async function uploadParts(fileInput) {
+	async function uploadParts(fileInput) { // fileInput is a Blob
 		const CHUNK_SIZE = 18 * 1024 * 1024; // 18MiB
 		const totalChunks = Math.ceil(fileInput.size / CHUNK_SIZE);
 		let offset = 0;
 		let chunkIndex = 0;
 		let arr = [];
+		const zip = new admZip();
+		zip.addFile("project.json", Buffer.from(await fileInput.arrayBuffer()), "", dirs.info?.comprLvl);
+		fileInput = new Blob([zip.toBuffer()], {
+			type: "application/zip"
+		});
 		for (let i = 0; i < totalChunks; i++) {
 			const chunk = fileInput.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
 			const chunkForm = new FormData();
 			chunkForm.append("file", chunk, `part_${i}.sb3`);
 			chunkForm.append("username", account?.username);
 			chunkForm.append("sessionToken", account?.sessionToken);
-
+			console.log(`Uploading part ${i + 1}/${totalChunks}`);
 			const res = await apiFetch(`${WORKER_URL}/api/upload`, { method: 'POST', body: chunkForm, headers:{"X-Client-Type":"StudioDANV-Web"} });
 			if (!res.success) throw new Error(res.error || "Lỗi tải mảnh ghép");
 			arr.push(res.file_id);
@@ -169,14 +177,15 @@ const rl = rlp.createInterface({ input, output });
 	}
 	async function downloadMeta() {
 		console.log(`Downloading metadata...`);
-		const allProjects = await loadProjects();
-		const url = allProjects?.find(getMeta);
-		const res = url?.fileId ? await apiFetch(`${WORKER_URL}/api/project/${url.fileId}`) : null;
+		const res = await downloadMetaS();
 		const data = {
-			dirs: (res?.dirs) ? res.dirs : ({
+			dirs: res?.dirs ? res.dirs : {
 				type: "dir",
 				children: {}
-			})
+			},
+			info: res?.info ? res.info : {
+				comprLvl: 6
+			}
 		};
 		if (data) {
 			console.log("Downloaded successfully!");
@@ -186,6 +195,22 @@ const rl = rlp.createInterface({ input, output });
 		}
 		return data;
 	}
+	async function downloadMetaS() {
+		const allProjects = await loadProjects();
+		const url = allProjects?.find(getMeta);
+		const res = url?.fileId ? await fetch(`${WORKER_URL}/api/project/${url.fileId}`) : null;
+		if (!res?.ok) return null;
+		try {
+			const zip = new admZip(Buffer.from(await res.arrayBuffer()));
+			const entry = zip.getEntry("project.json");
+			if (!entry) return null;
+			return JSON.parse(entry.getData().toString("utf8"));
+		}
+		catch (e) {
+			console.log(`Download error: ${e}`);
+			return null;
+		}
+	}
 	async function downloadFile(name, id) {
 		console.log(`Downloading ${name} (id ${id})...`);
 		try {
@@ -194,16 +219,22 @@ const rl = rlp.createInterface({ input, output });
 				console.error("File not available!");
 				return;
 			}
-			const out = fs.createWriteStream(name);
-			const body = stream.Readable.fromWeb(res.body);
-			await streamp.finished(body.pipe(out));
+			const zipBuffer = Buffer.from(await res.arrayBuffer());
+			const zip = new admZip(zipBuffer);
+			const entry = zip.getEntry("project.json");
+			if (!entry)
+				throw new Error("project.json not found!");
+			await fsp.writeFile(
+				name,
+				entry.getData()
+			);
 			console.log("Download completed successfully!");
 		} catch (e) {
 			console.error(`Error: ${e}`);
 		}
 	}
 	function getMeta(prj) {
-		return prj.visibility === "private" && prj.author === account?.username && prj.title === ".danv-file-hosting-map" && prj.credits === "Made by heythisismyacc (ezx6t). Do not touch this project, leave it as-is.";
+		return prj.visibility === "private" && prj.author === account?.username && prj.title.includes(titlle) && prj.credits.includes(cre);
 	}
 	function addDir(name) {
 		if (name === "." || name === ".." || name.includes("/")) return false;
@@ -289,7 +320,7 @@ const rl = rlp.createInterface({ input, output });
 				await uploadMeta(dirs)
 				break;
 			case "uplfile":
-				console.log("Available commands: cd, ls, choose");
+				console.log("Available commands: cd, ls, choose, help");
 				let choose = null;
 				while (!choose) {
 					console.log(`\nWorking dir: ${process.cwd()}`);
@@ -302,9 +333,13 @@ const rl = rlp.createInterface({ input, output });
 							(await lsc()).forEach(item => console.log(item));
 							break;
 						case "choose":
+							(await lsc()).forEach(item => console.log(item));
 							let fi = await input("Enter file name:");
 							if ((await lsc2()).includes(fi)) choose = fi;
 							else console.log("Not a file!");
+							break;
+						case "help":
+							console.log("Available commands: cd, ls, choose, help");
 							break;
 						default:
 							console.log("Invalid command!");
@@ -330,7 +365,7 @@ const rl = rlp.createInterface({ input, output });
 					else console.log("Not a file!");
 				}
 				if (bc) break;
-				console.log("Available commands: cd, ls, save");
+				console.log("Available commands: cd, ls, save, help");
 				let loop = !0;
 				while (loop) {
 					console.log(`\nWorking dir: ${process.cwd()}`);
@@ -347,15 +382,35 @@ const rl = rlp.createInterface({ input, output });
 							let dest = destDir();
 							await downloadFile(fil, dest.children[fil].content);
 							break;
+						case "help":
+							console.log("Available commands: cd, ls, save, help");
+							break;
 						default:
 							console.log("Invalid command!");
 					}
 				}
 				break;
+			case "reset":
+				if ((await input("Are you sure?(y/n):")).toLowerCase() === "y") {
+					dirs = {
+						dirs: {
+							type: "dir",
+							children: {}
+						},
+						info: {
+							comprLvl: 6
+						}
+					};
+				}
+				await uploadMeta(dirs);
+				break;
+			case "help":
+				console.log("Available commands: cd, ls, mkdir, rm, uplfile, dlfile, reset, help");
+				break;yy
 			default:
 				console.log("Invalid command!");
 		}
 	}
-	console.log("Available commands: cd, ls, mkdir, rm, uplfile, dlfile");
+	console.log("Available commands: cd, ls, mkdir, rm, uplfile, dlfile, reset, help");
 	while(!0)await mainLoop();
 }();
